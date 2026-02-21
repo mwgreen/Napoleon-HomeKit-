@@ -48,13 +48,15 @@ class NapoleonFireplace extends EventEmitter {
     // Cached fireplace state
     this.state = {
       power: false,
+      thermostat: false,
+      mainMode: protocol.MainMode.OFF,
       flameHeight: 0,
       blowerSpeed: 0,
       aux: false,
       splitFlow: false,
       nightLightLevel: 0,
       pilotLight: false,
-      thermostat: false,
+      remoteOverride: false,
       led: { on: false, color: { r: 0, g: 0, b: 0 }, mode: 0 },
     };
 
@@ -308,22 +310,25 @@ class NapoleonFireplace extends EventEmitter {
    * Query the fireplace for its current state and update this.state.
    */
   async updateState() {
+    // IFC CMD1: power, thermostat mode, night light, pilot
     try {
-      const powerResp = await this.sendCommand(protocol.buildGetPowerState());
-      const parsed = protocol.parsePowerState(powerResp.payload);
+      const cmd1Resp = await this.sendCommand(protocol.buildGetIFCCmd1State());
+      const parsed = protocol.parseIFCCmd1State(cmd1Resp.payload);
       if (parsed) {
         this.state.power = parsed.power;
         this.state.thermostat = parsed.thermostat;
+        this.state.mainMode = parsed.mainMode;
         this.state.nightLightLevel = parsed.nightLightLevel;
         this.state.pilotLight = parsed.pilotLight;
       }
     } catch (err) {
-      this._log(`Failed to get power state: ${err.message}`);
+      this._log(`Failed to get IFC CMD1 state: ${err.message}`);
     }
 
+    // IFC CMD2: flame height, blower speed, aux, split-flow
     try {
-      const ifcResp = await this.sendCommand(protocol.buildGetIFCCmd2State());
-      const parsed = protocol.parseIFCCmd2State(ifcResp.payload);
+      const cmd2Resp = await this.sendCommand(protocol.buildGetIFCCmd2State());
+      const parsed = protocol.parseIFCCmd2State(cmd2Resp.payload);
       if (parsed) {
         this.state.flameHeight = parsed.flameHeight;
         this.state.blowerSpeed = parsed.blowerSpeed;
@@ -331,9 +336,18 @@ class NapoleonFireplace extends EventEmitter {
         this.state.splitFlow = parsed.splitFlow;
       }
     } catch (err) {
-      this._log(`Failed to get IFC state: ${err.message}`);
+      this._log(`Failed to get IFC CMD2 state: ${err.message}`);
     }
 
+    // Check if RF remote is overriding BLE
+    try {
+      const remoteResp = await this.sendCommand(protocol.buildGetRemoteUsage());
+      if (remoteResp.payload.length > 0) {
+        this.state.remoteOverride = remoteResp.payload[0] !== 0x00;
+      }
+    } catch (_) { /* may not be supported */ }
+
+    // LED state
     try {
       const ledResp = await this.sendCommand(protocol.buildGetLedState());
       const parsed = protocol.parseLedState(ledResp.payload);
@@ -352,6 +366,8 @@ class NapoleonFireplace extends EventEmitter {
   async setPower(on) {
     await this.sendCommand(protocol.buildSetPower(on));
     this.state.power = on;
+    this.state.mainMode = on ? protocol.MainMode.MANUAL : protocol.MainMode.OFF;
+    this.state.thermostat = false;
     if (!on) {
       this.state.flameHeight = 0;
       this.state.blowerSpeed = 0;
@@ -359,10 +375,26 @@ class NapoleonFireplace extends EventEmitter {
     this.emit('stateChanged', this.state);
   }
 
+  /**
+   * Set the fireplace operating mode via IFC CMD1.
+   * @param {number} mode - MainMode value (OFF, MANUAL, THERMOSTAT, SMART)
+   */
+  async setMainMode(mode) {
+    const power = (mode & 0x01) !== 0;
+    const thermostat = (mode & 0x02) !== 0;
+    await this.sendCommand(
+      protocol.buildSetIFCCmd1(power, thermostat, this.state.nightLightLevel, this.state.pilotLight)
+    );
+    this.state.power = power;
+    this.state.thermostat = thermostat;
+    this.state.mainMode = mode;
+    this.emit('stateChanged', this.state);
+  }
+
   async setFlameHeight(height) {
     const h = protocol.clamp(height, 0, protocol.MAX_FLAME_HEIGHT);
     await this.sendCommand(
-      protocol.buildSetFlameAndBlower(h, this.state.blowerSpeed, this.state.aux, this.state.splitFlow)
+      protocol.buildSetIFCCmd2(h, this.state.blowerSpeed, this.state.aux, this.state.splitFlow)
     );
     this.state.flameHeight = h;
     this.emit('stateChanged', this.state);
@@ -371,7 +403,7 @@ class NapoleonFireplace extends EventEmitter {
   async setBlowerSpeed(speed) {
     const s = protocol.clamp(speed, 0, protocol.MAX_BLOWER_SPEED);
     await this.sendCommand(
-      protocol.buildSetFlameAndBlower(this.state.flameHeight, s, this.state.aux, this.state.splitFlow)
+      protocol.buildSetIFCCmd2(this.state.flameHeight, s, this.state.aux, this.state.splitFlow)
     );
     this.state.blowerSpeed = s;
     this.emit('stateChanged', this.state);
@@ -379,7 +411,7 @@ class NapoleonFireplace extends EventEmitter {
 
   async setAux(enabled) {
     await this.sendCommand(
-      protocol.buildSetFlameAndBlower(this.state.flameHeight, this.state.blowerSpeed, enabled, this.state.splitFlow)
+      protocol.buildSetIFCCmd2(this.state.flameHeight, this.state.blowerSpeed, enabled, this.state.splitFlow)
     );
     this.state.aux = enabled;
     this.emit('stateChanged', this.state);
@@ -387,15 +419,50 @@ class NapoleonFireplace extends EventEmitter {
 
   async setNightLight(brightness) {
     const b = protocol.clamp(brightness, 0, protocol.MAX_NIGHT_LIGHT);
-    await this.sendCommand(protocol.buildSetNightLight(b, this.state.pilotLight));
+    await this.sendCommand(
+      protocol.buildSetIFCCmd1(this.state.power, this.state.thermostat, b, this.state.pilotLight)
+    );
     this.state.nightLightLevel = b;
     this.emit('stateChanged', this.state);
   }
 
   async setContinuousPilot(enabled) {
-    await this.sendCommand(protocol.buildSetNightLight(this.state.nightLightLevel, enabled));
+    await this.sendCommand(
+      protocol.buildSetIFCCmd1(this.state.power, this.state.thermostat, this.state.nightLightLevel, enabled)
+    );
     this.state.pilotLight = enabled;
     this.emit('stateChanged', this.state);
+  }
+
+  /**
+   * Probe undocumented command 0xE5 (potential GET_IFC_CMD3_STATE).
+   * Returns raw response payload for analysis, or null on error.
+   */
+  async probeCmd3State() {
+    try {
+      const resp = await this.sendCommand(protocol.buildProbeGetCmd3State());
+      this._log(`Probe 0xE5 response: cmd=0x${resp.command.toString(16)} payload=${resp.payload.toString('hex')}`);
+      return resp;
+    } catch (err) {
+      this._log(`Probe 0xE5 failed: ${err.message}`);
+      return null;
+    }
+  }
+
+  /**
+   * Probe undocumented command 0x29 (potential SET_IFC_CMD3).
+   * @param {number[]} data - Raw payload bytes to send
+   * Returns raw response for analysis, or null on error.
+   */
+  async probeSetCmd3(data) {
+    try {
+      const resp = await this.sendCommand(protocol.buildProbeSetCmd3(data));
+      this._log(`Probe 0x29 response: cmd=0x${resp.command.toString(16)} payload=${resp.payload.toString('hex')}`);
+      return resp;
+    } catch (err) {
+      this._log(`Probe 0x29 failed: ${err.message}`);
+      return null;
+    }
   }
 
   async setLedState(on) {

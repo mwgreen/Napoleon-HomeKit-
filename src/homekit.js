@@ -52,12 +52,16 @@ function createAccessory(fireplace, opts) {
   // ──────────────────────────────────────────
   const heaterService = accessory.addService(Service.HeaterCooler, 'Fireplace');
 
-  // Active (on/off)
+  // Active (on/off) — uses IFC CMD1 main mode
   heaterService
     .getCharacteristic(Characteristic.Active)
     .onGet(() => (fireplace.state.power ? 1 : 0))
     .onSet(async (value) => {
-      await fireplace.setPower(value === 1);
+      if (value === 1) {
+        await fireplace.setMainMode(protocol.MainMode.MANUAL);
+      } else {
+        await fireplace.setMainMode(protocol.MainMode.OFF);
+      }
     });
 
   // Current heater state (idle vs heating)

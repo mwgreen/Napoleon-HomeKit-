@@ -33,16 +33,17 @@ const READ_CHAR_UUID_SHORT = 'ff02';
 
 // -- Commands --
 const Command = Object.freeze({
-  // Power / flame control
+  // IFC CMD1: power + thermostat mode + night light + pilot
+  SET_IFC_CMD1: 0x27,
+  GET_IFC_CMD1_STATE: 0xe3,
+
+  // IFC CMD2: flame height + blower speed + aux + split-flow
+  SET_IFC_CMD2: 0x28,
+  GET_IFC_CMD2_STATE: 0xe4,
+
+  // Power (BT controller level)
   SET_POWER: 0xc4,
   GET_POWER_STATE: 0xe7,
-
-  // Flame height + blower + aux + split-flow are packed into a single write
-  SET_IFC_CMD2: 0x28,       // sets flame height, blower speed, aux, split-flow
-  GET_IFC_CMD2_STATE: 0xf4, // reads back the same
-
-  // Night light / continuous pilot
-  SET_NIGHT_LIGHT: 0x27,    // sets night light brightness + pilot on/off
 
   // LED strip control
   SET_LED_STATE: 0xb1,
@@ -67,12 +68,27 @@ const Command = Object.freeze({
   SYNC_TIME: 0xc7,
   GET_BLE_VERSION: 0xf2,
   GET_MCU_VERSION: 0xf3,
+  GET_AUX_CTRL: 0xf4,
+  GET_REMOTE_USAGE: 0xee,
+
+  // Undocumented — potential thermostat / CMD3 commands (sequential with CMD1/CMD2)
+  SET_IFC_CMD3: 0x29,       // probe: may carry temperature setpoint
+  GET_IFC_CMD3_STATE: 0xe5, // probe: may return temperature data
 });
 
 // -- Power state values --
 const PowerState = Object.freeze({
   OFF: 0x00,
   ON: 0xff,
+});
+
+// -- Main mode values (lower 3 bits of IFC CMD1 flags) --
+// The Wireshark dissector documents these as the fireplace operating mode.
+const MainMode = Object.freeze({
+  OFF: 0,         // Fireplace off
+  MANUAL: 1,      // Manual flame control
+  THERMOSTAT: 2,  // Thermostat mode (client manages flame based on temp)
+  SMART: 3,       // Smart thermostat (power + thermostat active)
 });
 
 // -- LED mode values --
@@ -145,32 +161,49 @@ function parseResponse(buf) {
 }
 
 /**
- * Parse power state response.
- * Byte layout: [main_mode, power | thermostat | night_light | pilot]
+ * Parse IFC CMD1 state response (from GET_IFC_CMD1_STATE 0xE3).
+ *
+ * Payload: [status_byte, flags_byte]
+ * Flags byte bit layout (per bonaparte + Wireshark dissector):
+ *   Bit 0:    power        (IFC on)
+ *   Bit 1:    thermostat   (thermostat mode enabled)
+ *   Bits 2-3: reserved     (always 0 — candidate for temperature offset?)
+ *   Bits 4-6: night_light  (0-6 brightness)
+ *   Bit 7:    pilot        (continuous pilot enabled)
+ *
+ * The lower 3 bits also form a "main mode" value:
+ *   0=off, 1=manual, 2=thermostat, 3=smart
  */
-function parsePowerState(payload) {
+function parseIFCCmd1State(payload) {
   if (!payload || payload.length < 2) return null;
   const flags = payload[1];
   return {
     power: (flags & 0x01) !== 0,
     thermostat: (flags & 0x02) !== 0,
-    nightLightLevel: (flags >> 4) & 0x0f,
-    pilotLight: (flags & 0x04) !== 0,
+    mainMode: flags & 0x07,
+    nightLightLevel: (flags >> 4) & 0x07,
+    pilotLight: (flags & 0x80) !== 0,
   };
 }
 
 /**
- * Parse IFC command 2 state (flame height, blower speed, aux, split-flow).
+ * Parse IFC CMD2 state response (from GET_IFC_CMD2_STATE 0xE4).
+ *
+ * Payload: [status_byte, flags_byte]
+ * Flags byte bit layout (per bonaparte):
+ *   Bits 0-2: flame_height (0-6)
+ *   Bit 3:    aux          (120V relay)
+ *   Bits 4-6: blower_speed (0-6)
+ *   Bit 7:    split_flow   (split-flow valve)
  */
 function parseIFCCmd2State(payload) {
   if (!payload || payload.length < 2) return null;
-  const b1 = payload[0];
-  const b2 = payload[1];
+  const flags = payload[1];
   return {
-    flameHeight: b1 & 0x0f,
-    blowerSpeed: (b1 >> 4) & 0x0f,
-    aux: (b2 & 0x01) !== 0,
-    splitFlow: (b2 & 0x02) !== 0,
+    flameHeight: flags & 0x07,
+    aux: (flags & 0x08) !== 0,
+    blowerSpeed: (flags >> 4) & 0x07,
+    splitFlow: (flags & 0x80) !== 0,
   };
 }
 
@@ -207,25 +240,73 @@ function buildSetPower(on) {
   return buildMessage(Command.SET_POWER, [on ? PowerState.ON : PowerState.OFF]);
 }
 
-function buildGetPowerState() {
-  return buildMessage(Command.GET_POWER_STATE);
+/**
+ * Build SET_IFC_CMD1 (0x27) — controls power, thermostat mode, night light, pilot.
+ *
+ * Payload: [0x00, flags_byte]
+ * Flags byte layout:
+ *   Bit 0:    power
+ *   Bit 1:    thermostat
+ *   Bits 4-6: night_light brightness (0-6)
+ *   Bit 7:    pilot
+ */
+function buildSetIFCCmd1(power, thermostat, nightLight, pilot) {
+  const flags = (power ? 0x01 : 0x00)
+    | (thermostat ? 0x02 : 0x00)
+    | (clamp(nightLight, 0, MAX_NIGHT_LIGHT) << 4)
+    | (pilot ? 0x80 : 0x00);
+  return buildMessage(Command.SET_IFC_CMD1, [0x00, flags]);
 }
 
-function buildSetFlameAndBlower(flameHeight, blowerSpeed, aux, splitFlow) {
-  const b1 = (clamp(blowerSpeed, 0, MAX_BLOWER_SPEED) << 4) | clamp(flameHeight, 0, MAX_FLAME_HEIGHT);
-  let b2 = 0;
-  if (aux) b2 |= 0x01;
-  if (splitFlow) b2 |= 0x02;
-  return buildMessage(Command.SET_IFC_CMD2, [b1, b2]);
+function buildGetIFCCmd1State() {
+  return buildMessage(Command.GET_IFC_CMD1_STATE);
+}
+
+/**
+ * Build SET_IFC_CMD2 (0x28) — controls flame height, blower, aux, split-flow.
+ *
+ * Payload: [0x00, flags_byte]
+ * Flags byte layout (per bonaparte):
+ *   Bits 0-2: flame_height (0-6)
+ *   Bit 3:    aux
+ *   Bits 4-6: blower_speed (0-6)
+ *   Bit 7:    split_flow
+ */
+function buildSetIFCCmd2(flameHeight, blowerSpeed, aux, splitFlow) {
+  const flags = clamp(flameHeight, 0, MAX_FLAME_HEIGHT)
+    | (aux ? 0x08 : 0x00)
+    | (clamp(blowerSpeed, 0, MAX_BLOWER_SPEED) << 4)
+    | (splitFlow ? 0x80 : 0x00);
+  return buildMessage(Command.SET_IFC_CMD2, [0x00, flags]);
 }
 
 function buildGetIFCCmd2State() {
   return buildMessage(Command.GET_IFC_CMD2_STATE);
 }
 
-function buildSetNightLight(brightness, pilot) {
-  const b = (clamp(brightness, 0, MAX_NIGHT_LIGHT) << 4) | (pilot ? 0x04 : 0x00);
-  return buildMessage(Command.SET_NIGHT_LIGHT, [b]);
+function buildGetPowerState() {
+  return buildMessage(Command.GET_POWER_STATE);
+}
+
+function buildGetRemoteUsage() {
+  return buildMessage(Command.GET_REMOTE_USAGE);
+}
+
+/**
+ * Probe undocumented command 0x29 (potential SET_IFC_CMD3 for temperature).
+ * Sequential with SET_IFC_CMD1 (0x27) and SET_IFC_CMD2 (0x28).
+ * @param {number[]} data - Payload bytes to send (try [0x00, temp_byte])
+ */
+function buildProbeSetCmd3(data) {
+  return buildMessage(Command.SET_IFC_CMD3, data);
+}
+
+/**
+ * Probe undocumented command 0xE5 (potential GET_IFC_CMD3_STATE for temperature).
+ * Sequential with GET_IFC_CMD1_STATE (0xE3) and GET_IFC_CMD2_STATE (0xE4).
+ */
+function buildProbeGetCmd3State() {
+  return buildMessage(Command.GET_IFC_CMD3_STATE);
 }
 
 function buildSetLedState(on) {
@@ -289,6 +370,7 @@ module.exports = {
   READ_CHAR_UUID_SHORT,
   Command,
   PowerState,
+  MainMode,
   LedMode,
   MAX_FLAME_HEIGHT,
   MAX_BLOWER_SPEED,
@@ -301,17 +383,19 @@ module.exports = {
   // Message building / parsing
   buildMessage,
   parseResponse,
-  parsePowerState,
+  parseIFCCmd1State,
   parseIFCCmd2State,
   parseLedState,
   parseTimerState,
 
   // Command builders
   buildSetPower,
-  buildGetPowerState,
-  buildSetFlameAndBlower,
+  buildSetIFCCmd1,
+  buildGetIFCCmd1State,
+  buildSetIFCCmd2,
   buildGetIFCCmd2State,
-  buildSetNightLight,
+  buildGetPowerState,
+  buildGetRemoteUsage,
   buildSetLedState,
   buildSetLedColor,
   buildSetLedMode,
@@ -321,6 +405,10 @@ module.exports = {
   buildGetTimer,
   buildGetBleVersion,
   buildGetMcuVersion,
+
+  // Probe commands for undocumented thermostat/temperature support
+  buildProbeSetCmd3,
+  buildProbeGetCmd3State,
 
   // Utility
   clamp,
