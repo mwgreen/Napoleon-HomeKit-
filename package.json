@@ -1,0 +1,28 @@
+{
+  "name": "napoleon-homekit",
+  "version": "1.0.0",
+  "description": "Apple HomeKit bridge for Napoleon eFIRE Bluetooth fireplaces — control your fireplace with Siri",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "scan": "node src/scanner.js",
+    "test": "node --test src/__tests__/*.test.js"
+  },
+  "keywords": [
+    "homekit",
+    "napoleon",
+    "fireplace",
+    "bluetooth",
+    "ble",
+    "siri",
+    "efire"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "dependencies": {
+    "@abandonware/noble": "^1.9.2-25",
+    "hap-nodejs": "^0.12.2"
+  }
+}
