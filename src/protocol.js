@@ -334,10 +334,18 @@ function buildGetLedState() {
   return buildMessage(Command.GET_LED_STATE);
 }
 
+// Password auth response codes (from bonaparte const.py)
+const PasswordResult = Object.freeze({
+  SET_SUCCESS: 0x00,
+  SET_FAILED: 0x01,
+  INVALID_PASSWORD: 0x19,
+  LOGIN_SUCCESS: 0x35,
+});
+
 function buildSendPassword(password) {
-  // Password is a 4-digit PIN sent as 4 bytes
-  const digits = String(password).padStart(4, '0').split('').map(Number);
-  return buildMessage(Command.SEND_PASSWORD, digits);
+  // Password is a 4-digit PIN sent as ASCII bytes (per bonaparte)
+  const ascii = Buffer.from(String(password).padStart(4, '0'), 'ascii');
+  return buildMessage(Command.SEND_PASSWORD, [...ascii]);
 }
 
 function buildSetTimer(hours, minutes, enabled) {
@@ -379,6 +387,7 @@ module.exports = {
   READ_CHAR_UUID_SHORT,
   Command,
   PowerState,
+  PasswordResult,
   MainMode,
   LedMode,
   MAX_FLAME_HEIGHT,
