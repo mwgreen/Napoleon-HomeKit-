@@ -72,9 +72,10 @@ function createAccessory(fireplace, opts) {
       return Characteristic.CurrentHeaterCoolerState.HEATING;
     });
 
-  // Target heater state — lock to HEAT only
+  // Target heater state — lock to HEAT only (setValue before setProps to avoid validation warning)
   heaterService
     .getCharacteristic(Characteristic.TargetHeaterCoolerState)
+    .setValue(Characteristic.TargetHeaterCoolerState.HEAT)
     .setProps({
       validValues: [Characteristic.TargetHeaterCoolerState.HEAT],
     })
@@ -87,17 +88,17 @@ function createAccessory(fireplace, opts) {
     .onGet(() => 21); // 21 C nominal
 
   // Heating threshold temperature — mapped to flame height (0–6 → 15–35 C range)
+  // 7 steps (0–6) across 15–35 C: use integer steps for clean HomeKit display
+  const flameToTemp = (h) => Math.round(15 + (h / protocol.MAX_FLAME_HEIGHT) * 20);
+  const tempToFlame = (t) => Math.round(((t - 15) / 20) * protocol.MAX_FLAME_HEIGHT);
+
   heaterService
     .getCharacteristic(Characteristic.HeatingThresholdTemperature)
-    .setProps({ minValue: 15, maxValue: 35, minStep: 3.33 })
-    .onGet(() => {
-      // Map flame height 0–6 to temperature 15–35
-      return 15 + (fireplace.state.flameHeight / protocol.MAX_FLAME_HEIGHT) * 20;
-    })
+    .setValue(flameToTemp(fireplace.state.flameHeight))
+    .setProps({ minValue: 15, maxValue: 35, minStep: 1 })
+    .onGet(() => flameToTemp(fireplace.state.flameHeight))
     .onSet(async (value) => {
-      // Map temperature 15–35 back to flame height 0–6
-      const height = Math.round(((value - 15) / 20) * protocol.MAX_FLAME_HEIGHT);
-      await fireplace.setFlameHeight(protocol.clamp(height, 0, protocol.MAX_FLAME_HEIGHT));
+      await fireplace.setFlameHeight(protocol.clamp(tempToFlame(value), 0, protocol.MAX_FLAME_HEIGHT));
     });
 
   // ──────────────────────────────────────────
@@ -208,7 +209,7 @@ function createAccessory(fireplace, opts) {
     );
     heaterService.updateCharacteristic(
       Characteristic.HeatingThresholdTemperature,
-      15 + (state.flameHeight / protocol.MAX_FLAME_HEIGHT) * 20,
+      flameToTemp(state.flameHeight),
     );
 
     fanService.updateCharacteristic(Characteristic.Active, state.blowerSpeed > 0 ? 1 : 0);

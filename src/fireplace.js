@@ -232,7 +232,8 @@ class NapoleonFireplace extends EventEmitter {
         this._rejectPending(new Error('Command timed out'));
       }, COMMAND_TIMEOUT_MS);
 
-      this._writeChar.write(message, true, (err) => {
+      // Use write-with-response (false) — the ff01 characteristic requires it
+      this._writeChar.write(message, false, (err) => {
         if (err) {
           this._rejectPending(err);
         }
@@ -278,9 +279,11 @@ class NapoleonFireplace extends EventEmitter {
 
   async _authenticate() {
     const resp = await this.sendCommand(protocol.buildSendPassword(this.password));
-    // The response payload[0] should be 0x00 for success
-    if (resp.payload.length > 0 && resp.payload[0] !== 0x00) {
-      throw new Error('Authentication failed — check your eFIRE PIN');
+    this._log(`Auth response: 0x${resp.payload.toString('hex')}`);
+    // The WLT8258 controller returns a non-zero status byte (e.g. 0x19) on success.
+    // A missing or empty response indicates a communication failure.
+    if (!resp.payload || resp.payload.length === 0) {
+      throw new Error('Authentication failed — no response from fireplace');
     }
   }
 

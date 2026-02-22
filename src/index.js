@@ -16,6 +16,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const readline = require('readline');
 const { HAPStorage } = require('hap-nodejs');
 const NapoleonFireplace = require('./fireplace');
 const { createAccessory } = require('./homekit');
@@ -27,29 +28,49 @@ const { createAccessory } = require('./homekit');
 const CONFIG_PATH = path.join(__dirname, '..', 'config.json');
 const PERSIST_DIR = path.join(__dirname, '..', 'persist');
 
-function loadConfig() {
+function prompt(question) {
+  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim());
+    });
+  });
+}
+
+async function loadConfig() {
   const defaults = {
     name: 'Napoleon Fireplace',
     peripheralId: '',
-    password: '1234',
+    password: '',
     pincode: '031-45-154',
     port: 47129,
   };
 
-  if (!fs.existsSync(CONFIG_PATH)) {
-    console.error('No config.json found. Creating a template...');
-    fs.writeFileSync(CONFIG_PATH, JSON.stringify(defaults, null, 2) + '\n');
-    console.error(`Edit ${CONFIG_PATH} and set your peripheralId (run "npm run scan" to find it).`);
-    process.exit(1);
+  let config;
+  if (fs.existsSync(CONFIG_PATH)) {
+    config = { ...defaults, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
+  } else {
+    console.log('No config.json found — starting interactive setup.\n');
+    config = { ...defaults };
   }
-
-  const config = { ...defaults, ...JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')) };
 
   if (!config.peripheralId) {
-    console.error('peripheralId is required in config.json.');
-    console.error('Run "npm run scan" to discover nearby Napoleon fireplaces.');
-    process.exit(1);
+    console.log('No peripheral ID configured. Run "npm run scan" to discover nearby fireplaces,');
+    console.log('then enter the ID below.\n');
+    config.peripheralId = await prompt('Fireplace peripheral ID: ');
+    if (!config.peripheralId) {
+      console.error('Peripheral ID is required.');
+      process.exit(1);
+    }
   }
+
+  if (!config.password) {
+    config.password = await prompt('eFIRE 4-digit PIN (default 1234): ') || '1234';
+  }
+
+  // Save config for next time
+  fs.writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2) + '\n');
 
   return config;
 }
@@ -59,7 +80,7 @@ function loadConfig() {
 // ──────────────────────────────────────────
 
 async function main() {
-  const config = loadConfig();
+  const config = await loadConfig();
 
   // Ensure persist directory for HAP state
   if (!fs.existsSync(PERSIST_DIR)) {

@@ -175,8 +175,9 @@ function parseResponse(buf) {
  *   0=off, 1=manual, 2=thermostat, 3=smart
  */
 function parseIFCCmd1State(payload) {
-  if (!payload || payload.length < 2) return null;
-  const flags = payload[1];
+  if (!payload || payload.length < 1) return null;
+  // Some controllers return [status, flags], others return just [flags]
+  const flags = payload.length >= 2 ? payload[1] : payload[0];
   return {
     power: (flags & 0x01) !== 0,
     thermostat: (flags & 0x02) !== 0,
@@ -197,8 +198,8 @@ function parseIFCCmd1State(payload) {
  *   Bit 7:    split_flow   (split-flow valve)
  */
 function parseIFCCmd2State(payload) {
-  if (!payload || payload.length < 2) return null;
-  const flags = payload[1];
+  if (!payload || payload.length < 1) return null;
+  const flags = payload.length >= 2 ? payload[1] : payload[0];
   return {
     flameHeight: flags & 0x07,
     aux: (flags & 0x08) !== 0,
@@ -211,11 +212,19 @@ function parseIFCCmd2State(payload) {
  * Parse LED controller state response.
  */
 function parseLedState(payload) {
-  if (!payload || payload.length < 5) return null;
+  if (!payload || payload.length < 1) return null;
+  // Full response: [on, r, g, b, mode] — some controllers return just [on/status]
+  if (payload.length >= 5) {
+    return {
+      on: payload[0] === 0xff,
+      color: { r: payload[1], g: payload[2], b: payload[3] },
+      mode: payload[4],
+    };
+  }
   return {
-    on: payload[0] === 0xff,
-    color: { r: payload[1], g: payload[2], b: payload[3] },
-    mode: payload[4],
+    on: payload[0] !== 0x00,
+    color: { r: 0, g: 0, b: 0 },
+    mode: 0,
   };
 }
 

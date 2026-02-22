@@ -1,5 +1,7 @@
 node_modules/
 persist/
+config.json
 .env
 *.log
 .DS_Store
+.session-rag/

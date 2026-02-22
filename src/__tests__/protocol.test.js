@@ -130,8 +130,17 @@ describe('parseIFCCmd1State', () => {
     assert.equal(withBit7.pilotLight, true); // bit 7 SHOULD set pilot
   });
 
-  it('returns null for insufficient payload', () => {
-    assert.equal(protocol.parseIFCCmd1State(Buffer.from([0x00])), null);
+  it('handles single-byte payload (WLT8258 controllers)', () => {
+    const result = protocol.parseIFCCmd1State(Buffer.from([0x01]));
+    assert.ok(result);
+    assert.equal(result.power, true);
+    assert.equal(result.thermostat, false);
+    assert.equal(result.mainMode, protocol.MainMode.MANUAL);
+  });
+
+  it('returns null for empty payload', () => {
+    assert.equal(protocol.parseIFCCmd1State(Buffer.from([])), null);
+    assert.equal(protocol.parseIFCCmd1State(null), null);
   });
 });
 
