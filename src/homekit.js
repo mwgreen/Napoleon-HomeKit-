@@ -187,7 +187,7 @@ function createAccessory(fireplace, opts) {
 function generateMacAddress(seed) {
   let hash = 0;
   for (let i = 0; i < seed.length; i++) {
-    hash = ((hash << 5) - hash + ts.charCodeAt(i)) | 0;
+    hash = ((hash << 5) - hash + seed.charCodeAt(i)) | 0;
   }
   const bytes = [];
   for (let i = 0; i < 6; i++) {

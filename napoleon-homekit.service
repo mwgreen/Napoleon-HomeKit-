@@ -1,0 +1,16 @@
+[Unit]
+Description=Napoleon eFIRE HomeKit Bridge
+After=bluetooth.target network-online.target
+Wants=bluetooth.target
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/Napoleon-HomeKit-
+ExecStart=/usr/bin/node src/index.js
+Restart=on-failure
+RestartSec=10
+Environment=NODE_ENV=production
+
+[Install]
+WantedBy=multi-user.target
