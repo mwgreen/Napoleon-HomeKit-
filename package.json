@@ -22,7 +22,7 @@
     "node": ">=18.0.0"
   },
   "dependencies": {
-    "@abandonware/noble": "^1.9.2-25",
+    "@stoprocent/noble": "^2.3.16",
     "hap-nodejs": "^0.12.2"
   }
 }

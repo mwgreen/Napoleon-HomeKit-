@@ -1,7 +1,7 @@
 [Unit]
 Description=Napoleon eFIRE HomeKit Bridge
 After=bluetooth.target network-online.target
-Wants=bluetooth.target
+Wants=bluetooth.target network-online.target
 
 [Service]
 Type=simple
@@ -11,6 +11,7 @@ ExecStart=/usr/bin/node src/index.js
 Restart=on-failure
 RestartSec=10
 Environment=NODE_ENV=production
+AmbientCapabilities=CAP_NET_RAW
 
 [Install]
 WantedBy=multi-user.target

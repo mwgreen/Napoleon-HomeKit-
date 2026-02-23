@@ -11,7 +11,7 @@
 
 'use strict';
 
-const noble = require('@abandonware/noble');
+const noble = require('@stoprocent/noble');
 const protocol = require('./protocol');
 
 const SCAN_DURATION_MS = 15000;

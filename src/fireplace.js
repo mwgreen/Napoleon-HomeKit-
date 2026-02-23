@@ -8,7 +8,7 @@
 'use strict';
 
 const EventEmitter = require('events');
-const noble = require('@abandonware/noble');
+const noble = require('@stoprocent/noble');
 const protocol = require('./protocol');
 
 const CONNECT_TIMEOUT_MS = 20000;
