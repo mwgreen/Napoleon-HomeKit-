@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Decode a QR code from a boarding pass image and parse IATA BCBP data."""
+"""Decode a barcode (QR, Aztec, etc.) from a boarding pass image and parse IATA BCBP data."""
 
 import sys
 
@@ -9,9 +9,9 @@ except ImportError:
     sys.exit("Missing dependency: pip install Pillow")
 
 try:
-    from pyzbar.pyzbar import decode
+    import zxingcpp
 except ImportError:
-    sys.exit("Missing dependency: pip install pyzbar (and install libzbar0)")
+    sys.exit("Missing dependency: pip install zxing-cpp")
 
 
 def parse_bcbp(raw: str) -> dict:
@@ -32,7 +32,7 @@ def parse_bcbp(raw: str) -> dict:
         result["origin"] = raw[30:33]
         result["destination"] = raw[33:36]
         result["operating_carrier"] = raw[36:39].strip()
-        if len(raw) >= 43:
+        if len(raw) >= 44:
             result["flight_number"] = raw[39:44].strip()
         if len(raw) >= 47:
             result["date_of_flight"] = raw[44:47].strip()
@@ -55,21 +55,21 @@ def main():
 
     image_path = sys.argv[1]
     img = Image.open(image_path)
-    results = decode(img)
+    results = zxingcpp.read_barcodes(img)
 
     if not results:
-        print("No QR code found in the image.")
+        print("No barcode found in the image.")
         sys.exit(1)
 
     for i, result in enumerate(results):
-        raw_data = result.data.decode("utf-8", errors="replace")
-        print(f"--- QR Code {i + 1} ---")
-        print(f"Type: {result.type}")
+        raw_data = result.text
+        print(f"--- Barcode {i + 1} ---")
+        print(f"Format: {result.format}")
         print(f"Raw data: {raw_data}")
         print()
 
         # Try to parse as BCBP
-        if raw_data and raw_data[0] == "M":
+        if raw_data and raw_data[0] in ("M", "S"):
             print("Parsed as IATA BCBP:")
             parsed = parse_bcbp(raw_data)
             for key, value in parsed.items():
